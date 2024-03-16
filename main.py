@@ -1,14 +1,18 @@
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
 import asyncio
 import uvicorn
 from base64 import b64encode
+from typing import List
+import os
+
 
 app = FastAPI()
 
+IMAGE_DIRECTORY = "images"
+
 
 async def image_stream():
-	# Simulated image streaming, replace with your actual image streaming logic
 	while True:
 		# Open an image file, or fetch it from a source
 		with open("image.jpg", "rb") as file:
@@ -19,9 +23,15 @@ async def image_stream():
 		# Yield the image data
 		yield "data: " + str(image_data)
 
-		# Adjust sleep time as needed to control the rate of streaming
 		await asyncio.sleep(1)
 		return
+
+
+def get_image_batch(page: int = 1, size: int = 10) -> List[str]:
+	start_index = (page - 1) * size
+	end_index = start_index + size
+	image_files = os.listdir(IMAGE_DIRECTORY)
+	return image_files[start_index:end_index]
 
 
 @app.get("/")
@@ -39,6 +49,14 @@ async def stream_images(request: Request):
 	)
 	response.headers["Cache-Control"] = "no-cache"
 	return response
+
+
+@app.get("/images/")
+async def get_images(page: int = Query(1, ge=1), size: int = Query(10, ge=1, le=20)):
+	image_batch = get_image_batch(page, size)
+	if not image_batch:
+		raise HTTPException(status_code=404, detail="No images found.")
+	return {"images": image_batch}
 
 
 if __name__ == "__main__":
