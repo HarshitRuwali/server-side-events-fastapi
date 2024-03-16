@@ -5,11 +5,19 @@ import uvicorn
 from base64 import b64encode
 from typing import List
 import os
-
+from sse_starlette.sse import EventSourceResponse
 
 app = FastAPI()
 
 IMAGE_DIRECTORY = "images"
+COUNTER = 0
+MESSAGE_STREAM_DELAY = 1  # second
+MESSAGE_STREAM_RETRY_TIMEOUT = 15000  # milisecond
+
+def get_message():
+	global COUNTER
+	COUNTER += 1
+	return COUNTER, COUNTER < 21
 
 
 async def image_stream():
@@ -24,7 +32,7 @@ async def image_stream():
 		yield "data: " + str(image_data)
 
 		await asyncio.sleep(1)
-		return
+		# return # this will stop the streaming TESTING ONLY
 
 
 def get_image_batch(page: int = 1, size: int = 10) -> List[str]:
@@ -37,12 +45,12 @@ def get_image_batch(page: int = 1, size: int = 10) -> List[str]:
 @app.get("/")
 def hello():
 	response = {
-		"body": "hello there, try the endpoint, /stream-images",
+		"body": "hello there, try the endpoint, /stream/images, /stream/messages",
 	}
 	return response
 
 
-@app.get("/stream-images")
+@app.get("/stream/images")
 async def stream_images(request: Request):
 	response = StreamingResponse(
 		image_stream(), media_type="text/event-stream"
@@ -58,6 +66,35 @@ async def get_images(page: int = Query(1, ge=1), size: int = Query(10, ge=1, le=
 		raise HTTPException(status_code=404, detail="No images found.")
 	return {"images": image_batch}
 
+
+@app.get("/stream/message")
+async def message_stream(request: Request):
+	async def event_generator():
+		while True:
+			if await request.is_disconnected():
+				print("Request disconnected")
+				break
+
+		# Checks for new messages and return them to client if any
+		counter, exists = get_message()
+		if exists:
+			yield {
+				"event": "new_message",
+				"id": "message_id",
+				"retry": MESSAGE_STREAM_RETRY_TIMEOUT,
+				"data": f"Counter value {counter}",
+			}
+		else:
+			yield {
+				"event": "end_event",
+				"id": "message_id",
+				"retry": MESSAGE_STREAM_RETRY_TIMEOUT,
+				"data": "End of the stream",
+			}
+
+			await asyncio.sleep(MESSAGE_STREAM_DELAY)
+
+	return EventSourceResponse(event_generator())
 
 if __name__ == "__main__":
 	uvicorn.run(app, host="127.0.0.1", port=8000)
